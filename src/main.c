@@ -2,30 +2,88 @@
 #include <math.h>
 
 #define SAMPLE_RATE 44100
+#define MAX_VOICES 4
 
 typedef struct {
     float phase;
     float freq;
 } Osc;
 
-Osc osc = {0};
-float freq = 440.0f;
+typedef struct {
+    float phase;
+    float freq;
+    float env;
+    int gate; // 1 = key held, 0 = released
+} Voice;
+
+Voice voices[MAX_VOICES] = {0};
+
+float osc(float phase) {
+    float s1 = (sinf(phase) > 0) ? 1.0f : -1.0f;
+    float s2 = (sinf(phase * 1.003f) > 0) ? 1.0f : -1.0f;
+    return 0.5f * (s1 + s2);
+}
+
+void trigger_voice(float freq) {
+    for (int i = 0; i < MAX_VOICES; i++) {
+        if (!voices[i].gate) {
+            voices[i].freq = freq;
+            voices[i].gate = 1;
+            voices[i].env = 0.0f;
+            return;
+        }
+    }
+
+    // if all busy, steal voice 0
+    voices[0].freq = freq;
+    voices[0].env = 0.0f;
+}
+
+void release_voice(float freq) {
+    for (int i = 0; i < MAX_VOICES; i++) {
+        if (voices[i].gate && voices[i].freq == freq) {
+            voices[i].gate = 0; // start release phase
+            return;
+        }
+    }
+}
 
 // AudioCallback already named in raylib
 void audio_callback(void *buffer, unsigned int frames) {
-    float *out = (float *)buffer;
+    float *out = buffer;
 
     for (unsigned int i = 0; i < frames; i++) {
-        float sample = sinf(osc.phase);
+        float sample = 0.0f;
 
-        osc.phase += 2.0f * PI * osc.freq / SAMPLE_RATE;
+        for (int v = 0; v < MAX_VOICES; v++) {
+            Voice *voice = &voices[v];
 
-        if (osc.phase > 2.0f * PI)
-            osc.phase -= 2.0f * PI;
+            if (voice->gate || voice->env > 0.001f) {
+                voice->phase += 2.0f * PI * voice->freq / 44100.0f;
+                if (voice->phase > 2.0f * PI)
+                    voice->phase -= 2.0f * PI;
 
-        // stereo output
-        out[i * 2 + 0] = sample; // left
-        out[i * 2 + 1] = sample; // right
+                if (voice->gate)
+                    voice->env += 0.002f; // attack
+                else
+                    voice->env -= 0.003f; // release
+
+                if (voice->env > 1.0f)
+                    voice->env = 1.0f;
+                if (voice->env < 0.0f) {
+                    voice->env = 0.0f;
+                    voice->gate = 0;
+                }
+
+                float s = sinf(voice->phase) * voice->env;
+                sample += s;
+            }
+        }
+
+        sample *= 0.25f; // prevent clipping (4 voices)
+
+        out[i * 2 + 0] = sample;
+        out[i * 2 + 1] = sample;
     }
 }
 
@@ -41,31 +99,47 @@ int main(void) {
 
     SetTargetFPS(60);
 
-    while (!WindowShouldClose()) {
-        // C4 major
-        if (IsKeyPressed(KEY_A))
-            freq = 261.63f; // C4
-        if (IsKeyPressed(KEY_S))
-            freq = 293.66f; // D4
-        if (IsKeyPressed(KEY_D))
-            freq = 329.63f; // E4
-        if (IsKeyPressed(KEY_F))
-            freq = 349.23f; // F4
-        if (IsKeyPressed(KEY_G))
-            freq = 392.00f; // G4
-        if (IsKeyPressed(KEY_H))
-            freq = 440.00f; // A4
-        if (IsKeyPressed(KEY_J))
-            freq = 493.88f; // B4
-        if (IsKeyPressed(KEY_K))
-            freq = 523.25; // C5
+    int gate;
 
-        osc.freq = freq;
+    while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(BLACK);
 
-        DrawText("SYNTH ACTIVE", 20, 20, 30, GREEN);
-        DrawText("Press ESC to exit", 20, 60, 20, RAYWHITE);
+        if (IsKeyPressed(KEY_A))
+            trigger_voice(261.63f);
+        if (IsKeyPressed(KEY_S))
+            trigger_voice(293.66f);
+        if (IsKeyPressed(KEY_D))
+            trigger_voice(329.63f);
+        if (IsKeyPressed(KEY_F))
+            trigger_voice(349.23f);
+        if (IsKeyPressed(KEY_G))
+            trigger_voice(392.00f);
+        if (IsKeyPressed(KEY_H))
+            trigger_voice(440.0f);
+        if (IsKeyPressed(KEY_J))
+            trigger_voice(493.88f);
+        if (IsKeyPressed(KEY_K))
+            trigger_voice(523.25f);
+
+        if (IsKeyReleased(KEY_A))
+            release_voice(261.63f);
+        if (IsKeyReleased(KEY_S))
+            release_voice(293.66f);
+        if (IsKeyReleased(KEY_D))
+            release_voice(329.63f);
+        if (IsKeyReleased(KEY_F))
+            release_voice(349.23f);
+        if (IsKeyReleased(KEY_G))
+            release_voice(392.00f);
+        if (IsKeyReleased(KEY_H))
+            release_voice(440.0f);
+        if (IsKeyReleased(KEY_J))
+            release_voice(493.88f);
+        if (IsKeyReleased(KEY_K))
+            release_voice(523.25f);
+
+        DrawText("SYNTH v1 - HOLD KEYS", 20, 20, 30, GREEN);
 
         EndDrawing();
     }
